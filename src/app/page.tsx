@@ -25,71 +25,96 @@ export default function Home() {
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
   const [lastActivityCount, setLastActivityCount] = useState(0);
   const [lastActivityDate, setLastActivityDate] = useState<string | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
 
   useEffect(() => {
     setMounted(true);
     
     if (typeof window === 'undefined') return;
     
-    const isAuthenticated = localStorage.getItem('userAuthenticated');
+    const authenticated = localStorage.getItem('userAuthenticated') === 'true';
+    setIsAuthenticated(authenticated);
+    
     const profile = getChildProfile();
     const onboardingCompleted = localStorage.getItem('onboardingCompleted');
     const plan = localStorage.getItem('userPlan') as 'free' | 'premium' || 'free';
     const trialEndDate = localStorage.getItem('trialEndDate');
     const lastActivity = localStorage.getItem('lastActivityDate');
     
-    if (!isAuthenticated) {
-      router.push('/auth');
-      return;
-    }
+    // Permitir acesso sem login - redirecionamento removido
+    // if (!authenticated) {
+    //   router.push('/auth');
+    //   return;
+    // }
     
+    // Se não tem perfil, permitir continuar sem redirecionamento
     if (!onboardingCompleted || !profile) {
-      router.push('/onboarding');
-      return;
+      // Para usuários não logados, usar perfil genérico ou permitir continuar
+      if (!authenticated) {
+        // Usar perfil padrão para demo
+        const defaultProfile: ChildProfile = {
+          name: 'Seu Filho(a)',
+          birthDate: new Date(Date.now() - 2 * 365 * 24 * 60 * 60 * 1000).toISOString(), // 2 anos
+          interests: ['brincadeiras', 'aprendizado'],
+          gender: 'neutral'
+        };
+        setChildProfile(defaultProfile);
+      } else {
+        // Usuários logados sem perfil vão para onboarding
+        router.push('/onboarding');
+        return;
+      }
+    } else {
+      setChildProfile(profile);
     }
     
-    // Verificar status do trial
-    if (trialEndDate) {
+    // Verificar status do trial apenas para usuários autenticados
+    if (authenticated && trialEndDate) {
       const daysRemaining = getTrialDaysRemaining(trialEndDate);
       const trialActive = daysRemaining > 0;
       setTrialDaysRemaining(daysRemaining);
       setIsTrialActiveState(trialActive);
     }
     
-    setChildProfile(profile);
-    const currentProgress = getProgress();
-    setProgress(currentProgress);
     setUserPlan(plan);
-    setLastActivityCount(currentProgress.completedActivities.length);
+    setLastActivityCount(progress.completedActivities.length);
     setLastActivityDate(lastActivity);
 
-    // Sistema de pop-ups inteligente
-    const lastFeedbackDate = localStorage.getItem('lastFeedbackDate');
-    const feedbackCount = parseInt(localStorage.getItem('feedbackCount') || '0');
-    const today = new Date().toDateString();
+    // Sistema de pop-ups inteligente apenas para usuários autenticados
+    if (authenticated) {
+      const lastFeedbackDate = localStorage.getItem('lastFeedbackDate');
+      const feedbackCount = parseInt(localStorage.getItem('feedbackCount') || '0');
+      const today = new Date().toDateString();
 
-    // Pop-up de feedback durante o trial (a cada 2 dias)
-    if (trialEndDate && isTrialActive(trialEndDate) && lastFeedbackDate !== today) {
-      const daysSinceStart = 7 - getTrialDaysRemaining(trialEndDate);
-      if (daysSinceStart > 0 && daysSinceStart % 2 === 0 && feedbackCount < 3) {
+      // Pop-up de feedback durante o trial (a cada 2 dias)
+      if (trialEndDate && isTrialActive(trialEndDate) && lastFeedbackDate !== today) {
+        const daysSinceStart = 7 - getTrialDaysRemaining(trialEndDate);
+        if (daysSinceStart > 0 && daysSinceStart % 2 === 0 && feedbackCount < 3) {
+          setTimeout(() => {
+            setShowFeedbackModal(true);
+          }, 3000); // Mostrar após 3 segundos
+        }
+      }
+
+      // Pop-up de upgrade quando trial está acabando
+      if (trialEndDate && getTrialDaysRemaining(trialEndDate) <= 1 && plan === 'free') {
         setTimeout(() => {
-          setShowFeedbackModal(true);
-        }, 3000); // Mostrar após 3 segundos
+          setPaymentTrigger('trial_ending');
+          setShowPaymentModal(true);
+        }, 5000); // Mostrar após 5 segundos
       }
     }
 
-    // Pop-up de upgrade quando trial está acabando
-    if (trialEndDate && getTrialDaysRemaining(trialEndDate) <= 1 && plan === 'free') {
-      setTimeout(() => {
-        setPaymentTrigger('trial_ending');
-        setShowPaymentModal(true);
-      }, 5000); // Mostrar após 5 segundos
-    }
-
+    // Carregar progresso existente
+    const currentProgress = getProgress();
+    setProgress(currentProgress);
+    setLastActivityCount(currentProgress.completedActivities.length);
   }, [router]);
 
-  // Verificar limite de atividades e mostrar modal
+  // Verificar limite de atividades e mostrar modal apenas para usuários autenticados
   useEffect(() => {
+    if (!isAuthenticated) return;
+    
     const userCanAccess = canAccessActivity(userPlan, isTrialActiveState, progress.completedActivities.length, lastActivityDate);
     
     if (!userCanAccess && userPlan === 'free' && !isTrialActiveState) {
@@ -101,9 +126,9 @@ export default function Home() {
         }, 2000);
       }
     }
-  }, [progress.completedActivities.length, isTrialActiveState, userPlan, lastActivityCount, lastActivityDate]);
+  }, [progress.completedActivities.length, isTrialActiveState, userPlan, lastActivityCount, lastActivityDate, isAuthenticated]);
 
-  if (!mounted || !childProfile) {
+  if (!mounted) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-50 flex items-center justify-center">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
@@ -113,7 +138,7 @@ export default function Home() {
 
   // Calcular idade atual
   const today = new Date();
-  const birth = new Date(childProfile.birthDate);
+  const birth = childProfile ? new Date(childProfile.birthDate) : new Date(Date.now() - 2 * 365 * 24 * 60 * 60 * 1000);
   const currentAgeInMonths = (today.getFullYear() - birth.getFullYear()) * 12 + (today.getMonth() - birth.getMonth());
   
   // Determinar grupo de idade atual
@@ -130,17 +155,17 @@ export default function Home() {
   // Filtrar missões por idade
   const ageMissions = getActivitiesForAge(currentAgeGroup);
   const indoorActivities = getIndoorActivities();
-  const recommendedActivities = getRecommendedActivities(childProfile.interests, currentAgeGroup);
+  const recommendedActivities = childProfile ? getRecommendedActivities(childProfile.interests, currentAgeGroup) : [];
 
   const totalActivities = ageMissions.reduce((acc, mission) => acc + mission.activities.length, 0);
   const completedCount = progress.completedActivities.length;
   const progressPercentage = totalActivities > 0 ? (completedCount / totalActivities) * 100 : 0;
 
-  // Verificar se pode acessar atividades
-  const userCanAccessActivity = canAccessActivity(userPlan, isTrialActiveState, completedCount, lastActivityDate);
+  // Verificar se pode acessar atividades - usuários não logados podem acessar livremente
+  const userCanAccessActivity = !isAuthenticated || canAccessActivity(userPlan, isTrialActiveState, completedCount, lastActivityDate);
 
-  // Verificar se pode acessar relatórios
-  const canAccessReports = userPlan === 'premium' || isTrialActiveState;
+  // Verificar se pode acessar relatórios - apenas usuários autenticados premium
+  const canAccessReports = isAuthenticated && (userPlan === 'premium' || isTrialActiveState);
 
   // Calcular progresso por linha de atividade
   const lineProgress = activityLines.map(line => {
@@ -182,8 +207,7 @@ export default function Home() {
     const feedbacks = JSON.parse(localStorage.getItem('userFeedbacks') || '[]');
     feedbacks.push({
       ...feedback,
-      date: new Date().toISOString(),
-      trialDay: 7 - trialDaysRemaining
+      date: new Date().toISOString(),      trialDay: 7 - trialDaysRemaining
     });
     localStorage.setItem('userFeedbacks', JSON.stringify(feedbacks));
     localStorage.setItem('lastFeedbackDate', new Date().toDateString());
@@ -202,6 +226,10 @@ export default function Home() {
 
   const handleReportsClick = () => {
     if (!canAccessReports) {
+      if (!isAuthenticated) {
+        router.push('/auth');
+        return;
+      }
       setPaymentTrigger('reports_blocked');
       setShowPaymentModal(true);
     } else {
@@ -270,7 +298,10 @@ export default function Home() {
                   IsaLabs
                 </h1>
                 <p className="text-xs sm:text-sm text-gray-600 hidden sm:block">
-                  Entre na sua conta para começar a jornada de desenvolvimento do(a) seu(sua) filho(a).
+                  {isAuthenticated 
+                    ? 'Entre na sua conta para começar a jornada de desenvolvimento do(a) seu(sua) filho(a).'
+                    : 'Explore atividades gratuitas para o desenvolvimento infantil!'
+                  }
                 </p>
               </div>
             </div>
@@ -292,36 +323,46 @@ export default function Home() {
                 <span className="hidden sm:inline text-xs sm:text-sm">Segmentos</span>
               </button>
               
-              <div className={`flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1 rounded-full text-xs sm:text-sm ${
-                userPlan === 'premium' 
-                  ? 'bg-gradient-to-r from-yellow-400 to-orange-500 text-white' 
-                  : isTrialActiveState
-                  ? 'bg-gradient-to-r from-green-400 to-blue-500 text-white'
-                  : 'bg-gray-100 text-gray-700'
-              }`}>
-                {userPlan === 'premium' ? (
-                  <Trophy className="w-3 sm:w-4 h-3 sm:h-4" />
-                ) : isTrialActiveState ? (
-                  <Zap className="w-3 sm:w-4 h-3 sm:h-4" />
-                ) : (
-                  <Trophy className="w-3 sm:w-4 h-3 sm:h-4" />
-                )}
-                <span className="font-semibold">
-                  {userPlan === 'premium' 
-                    ? 'Premium' 
-                    : isTrialActiveState 
-                    ? `Trial ${trialDaysRemaining}d`
-                    : 'Gratuito'
-                  }
-                </span>
-              </div>
+              {!isAuthenticated ? (
+                <Link
+                  href="/auth"
+                  className="flex items-center gap-1 sm:gap-2 bg-blue-600 hover:bg-blue-700 text-white px-3 sm:px-4 py-2 rounded-lg transition-colors text-xs sm:text-sm touch-manipulation"
+                >
+                  <User className="w-3 sm:w-4 h-3 sm:h-4" />
+                  <span>Entrar</span>
+                </Link>
+              ) : (
+                <div className={`flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1 rounded-full text-xs sm:text-sm ${
+                  userPlan === 'premium' 
+                    ? 'bg-gradient-to-r from-yellow-400 to-orange-500 text-white' 
+                    : isTrialActiveState
+                    ? 'bg-gradient-to-r from-green-400 to-blue-500 text-white'
+                    : 'bg-gray-100 text-gray-700'
+                }`}>
+                  {userPlan === 'premium' ? (
+                    <Trophy className="w-3 sm:w-4 h-3 sm:h-4" />
+                  ) : isTrialActiveState ? (
+                    <Zap className="w-3 sm:w-4 h-3 sm:h-4" />
+                  ) : (
+                    <Trophy className="w-3 sm:w-4 h-3 sm:h-4" />
+                  )}
+                  <span className="font-semibold">
+                    {userPlan === 'premium' 
+                      ? 'Premium' 
+                      : isTrialActiveState 
+                      ? `Trial ${trialDaysRemaining}d`
+                      : 'Gratuito'
+                    }
+                  </span>
+                </div>
+              )}
             </div>
           </div>
         </div>
       </div>
 
-      {/* Aviso do Trial ou Plano Gratuito - Mobile Otimizado */}
-      {isTrialActiveState && trialDaysRemaining <= 3 && (
+      {/* Aviso do Trial ou Plano Gratuito - Apenas para usuários autenticados */}
+      {isAuthenticated && isTrialActiveState && trialDaysRemaining <= 3 && (
         <div className="bg-gradient-to-r from-orange-500 to-red-500 text-white">
           <div className="container mx-auto px-3 sm:px-4 py-2 sm:py-3">
             <div className="flex items-center justify-between gap-2">
@@ -345,7 +386,7 @@ export default function Home() {
         </div>
       )}
 
-      {!isTrialActiveState && userPlan === 'free' && !userCanAccessActivity && (
+      {isAuthenticated && !isTrialActiveState && userPlan === 'free' && !userCanAccessActivity && (
         <div className="bg-gradient-to-r from-purple-600 to-pink-600 text-white">
           <div className="container mx-auto px-3 sm:px-4 py-2 sm:py-3">
             <div className="flex items-center justify-between gap-2">
@@ -419,6 +460,33 @@ export default function Home() {
       )}
 
       <div className="container mx-auto px-3 sm:px-4 py-4 sm:py-6 space-y-4 sm:space-y-6">
+        {/* Mensagem para usuários não logados */}
+        {!isAuthenticated && (
+          <div className="bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-xl p-4 sm:p-6">
+            <div className="flex items-center gap-3 mb-3">
+              <Star className="w-6 h-6" />
+              <h2 className="text-lg sm:text-xl font-bold">Bem-vindo ao IsaLabs!</h2>
+            </div>
+            <p className="text-blue-100 mb-4">
+              Explore atividades gratuitas para o desenvolvimento infantil. Faça login para personalizar as atividades e acompanhar o progresso do seu filho(a)!
+            </p>
+            <div className="flex gap-3">
+              <Link
+                href="/auth"
+                className="bg-white text-blue-600 px-4 py-2 rounded-lg font-medium hover:bg-gray-100 transition-colors"
+              >
+                Fazer Login
+              </Link>
+              <Link
+                href="/onboarding"
+                className="bg-blue-700 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-800 transition-colors"
+              >
+                Criar Perfil
+              </Link>
+            </div>
+          </div>
+        )}
+
         {/* Cards de Atividades por Clima - Mobile Otimizado */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
           {/* Atividades para Dias Chuvosos */}
@@ -570,7 +638,7 @@ export default function Home() {
                 👶
               </div>
               <div className="min-w-0 flex-1">
-                <h3 className="font-medium text-gray-900 text-sm sm:text-base truncate">{childProfile.name}</h3>
+                <h3 className="font-medium text-gray-900 text-sm sm:text-base truncate">{childProfile?.name || 'Seu Filho(a)'}</h3>
                 <p className="text-xs sm:text-sm text-gray-600">
                   {progress.avatarAccessories?.length || 0} acessórios desbloqueados
                 </p>
@@ -608,7 +676,7 @@ export default function Home() {
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 sm:p-6">
             <div className="flex items-center gap-2 mb-4">
               <Star className="w-4 sm:w-5 h-4 sm:h-5 text-yellow-600" />
-              <h2 className="text-base sm:text-lg font-semibold text-gray-900">Recomendadas para {childProfile.name}</h2>
+              <h2 className="text-base sm:text-lg font-semibold text-gray-900">Recomendadas para {childProfile?.name || 'Seu Filho(a)'}</h2>
             </div>
             
             <div className="space-y-3">
